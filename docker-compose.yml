@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+
+  activemq:
+    image: 'symptoma/activemq:5.17.2'   # https://hub.docker.com/r/symptoma/activemq
+    ports:
+      - '8161:8161' # ActiveMQ Web console
+      - '1883:1883' # MQTT
+      - '61616:61616' # OpenWire JMS
+    volumes:
+      - ./activemq/broker.xml:/opt/activemq/conf/activemq.xml
+    networks:
+      - activemq_network
+
+# 네트워크 구성
+networks:
+  activemq_network:
+    driver: bridge
