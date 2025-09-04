@@ -28,7 +28,7 @@ class MqQueueTests {
     @Autowired private QueueServer2Listener server2;
 
     @Test
-    @DisplayName("jmsTopicFactory로 설정하여 토픽으로 한경우 모든 서버를 같은 토픽 메시지를 받아야한다.")
+    @DisplayName("VirtualTopic 복제 큐(경쟁소비)에서는 동일 메시지를 컨슈머 중 단 1곳만 수신해야 한다")
     void onlyOneServerGetsIt_onSharedTopicSubscription() throws Exception {
         // given
         TransitionMessage msg = new TransitionMessage();
