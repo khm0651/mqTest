@@ -2,13 +2,13 @@ package org.example.mqexample;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.activemq.command.ActiveMQTopic;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.jms.annotation.EnableJms;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.core.JmsTemplate;
 
@@ -20,67 +20,69 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Slf4j
 @SpringBootTest
-class MqTopicTests {
+@DisplayName("VirtualTopic 복제 큐 - 경쟁소비 시나리오")
+class VirtualTopicQueueCompetingConsumersTests {
 
     @Autowired private JmsTemplate jmsTemplate;
-    @Autowired private TopicServer1Listener server1;
-    @Autowired private TopicServer2Listener server2;
+    @Autowired private Server1 server1;
+    @Autowired private Server2 server2;
 
     @Test
-    @DisplayName("jmsTopicFactory로 설정하여 토픽으로 한경우 모든 서버를 같은 토픽 메시지를 받아야한다.")
-    void bothServersReceiveSameTopicMessage() throws Exception {
+    @DisplayName("토픽 1건 발행 → VirtualTopic 복제 큐에서 컨슈머 2개 중 정확히 1곳만 수신")
+    void case1() throws Exception {
         // given
         TransitionMessage msg = new TransitionMessage();
         msg.setAt(OffsetDateTime.now());
         msg.setAct("USER_INTERACTION");
         msg.setStatus("HOLD:INTERACTION");
 
-        // when: 토픽으로 발행 (패턴 noti.robots.*.transitions 매칭)
-        jmsTemplate.send(MQMessage.destination("noti.robots.r1.transitions"), session -> MQMessage.toMqttClientReadableMessage(msg));
+        // when: 단일 토픽으로 발행
+        jmsTemplate.send(new ActiveMQTopic("noti.robots.r1.transitions"),
+                session -> MQMessage.toMqttClientReadableMessage(msg));
 
-        // then: 두 리스너 모두 1건씩 수신
-        boolean aOk = server1.getLatch().await(5, TimeUnit.SECONDS);
-        boolean bOk = server2.getLatch().await(5, TimeUnit.SECONDS);
+        // then: 둘 중 '정확히 1곳'만 수신
+        boolean server1Ok = server1.getLatch().await(5, TimeUnit.SECONDS);
+        boolean server2Ok = server2.getLatch().await(5, TimeUnit.SECONDS);
 
-        assertThat(aOk).as("ServerA should receive").isTrue();
-        assertThat(bOk).as("ServerB should receive").isTrue();
+        // XOR: 하나만 true 여야 함
+        assertThat(server1Ok ^ server2Ok).as("Exactly one listener must receive the message").isTrue();
 
-        assertThat(server1.getLastStatus()).isEqualTo("HOLD:INTERACTION");
-        assertThat(server2.getLastStatus()).isEqualTo("HOLD:INTERACTION");
+        if (server1Ok) assertThat(server1.getLastStatus()).isEqualTo("HOLD:INTERACTION");
+        if (server2Ok) assertThat(server2.getLastStatus()).isEqualTo("HOLD:INTERACTION");
     }
 
     @TestConfiguration
-    static class TopicServer {
+    static class ServerConfiguration {
         @Bean
-        TopicServer1Listener topicServer1Listener() { return new TopicServer1Listener(); }
+        Server1 server1() { return new Server1(); }
 
         @Bean
-        TopicServer2Listener topicServer2Listener() { return new TopicServer2Listener(); }
+        Server2 server2() { return new Server2(); }
     }
 
     @Slf4j
-    static class TopicServer1Listener {
+    static class Server1 {
         @Getter
         private final CountDownLatch latch = new CountDownLatch(1);
         @Getter private volatile String lastStatus;
 
-        @JmsListener(destination = "noti.robots.*.transitions", containerFactory = "jmsTopicFactory")
+        @JmsListener(destination = "consumers.rs.noti.robots.*.transitions")
         public void onMessage(@Payload TransitionMessage msg, @DestinationCapture String id) {
             lastStatus = msg.getStatus();
-            log.info("[TopicServer1] msg = {}, id = {}", msg, id);
+            log.info("[Server1-Queue] msg = {}, id = {}", msg, id);
             latch.countDown();
         }
     }
 
     @Slf4j
-    static class TopicServer2Listener {
+    static class Server2 {
         @Getter private final CountDownLatch latch = new CountDownLatch(1);
         @Getter private volatile String lastStatus;
 
-        @JmsListener(destination = "noti.robots.*.transitions", containerFactory = "jmsTopicFactory")
+        @JmsListener(destination = "consumers.rs.noti.robots.*.transitions")
         public void onMessage(@Payload TransitionMessage msg, @DestinationCapture String id) {
             lastStatus = msg.getStatus();
-            log.info("[TopicServer2] msg = {}, id = {}", msg, id);
+            log.info("[Server2-Queue] msg = {}, id = {}", msg, id);
             latch.countDown();
         }
     }
